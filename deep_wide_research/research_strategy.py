@@ -169,7 +169,10 @@ async def _execute_single_tool(
             result = json.dumps(raw)
             break  # Preserve successful results and explicit tool errors.
         except Exception as exc:
-            result = json.dumps({"error": str(exc) or type(exc).__name__})
+            # Incumbent/custom URLs may contain credentials. Do not copy their
+            # transport exception text into the model conversation.
+            detail = (str(exc) or type(exc).__name__) if resolved_service == "parallel" else f"{type(exc).__name__}: tool request failed"
+            result = json.dumps({"error": detail})
             break  # An explicit provider failure must not switch providers.
     
     if result is None:
