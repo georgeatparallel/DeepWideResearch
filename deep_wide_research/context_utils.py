@@ -136,6 +136,25 @@ def exa_search_to_sources(result_obj: Any, query: Optional[str]) -> List[Dict[st
     return sources
 
 
+def parallel_result_errors(result_obj: Any) -> List[Dict[str, Any]]:
+    """Keep per-URL fetch failures, including mixed success/error responses."""
+    top = _try_parse_json(result_obj)
+    if not isinstance(top, dict):
+        return []
+    candidates = [top.get("structuredContent"), top]
+    for part in top.get("content", []) if isinstance(top.get("content"), list) else []:
+        if isinstance(part, dict):
+            candidates.append(_try_parse_json(part.get("text")))
+    errors = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or not isinstance(candidate.get("errors"), list):
+            continue
+        for error in candidate["errors"]:
+            if isinstance(error, dict) and error not in errors:
+                errors.append(error)
+    return errors
+
+
 def parallel_to_sources(result_obj: Any, query: Optional[str]) -> List[Dict[str, Any]]:
     """Normalize Parallel search/fetch structured content or JSON text blocks."""
     top = _try_parse_json(result_obj)

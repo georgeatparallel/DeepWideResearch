@@ -23,20 +23,20 @@ try:
     from .providers import chat_complete
     from .mcp_client import get_registry
     from .newprompt import create_unified_research_prompt
-    from .context_utils import extract_sources_from_result, _infer_service_from_tool
+    from .context_utils import extract_sources_from_result, _infer_service_from_tool, parallel_result_errors
 except ImportError:
     # Try absolute import (direct execution or deployment environment)
     try:
         from deep_wide_research.providers import chat_complete
         from deep_wide_research.mcp_client import get_registry
         from deep_wide_research.newprompt import create_unified_research_prompt
-        from deep_wide_research.context_utils import extract_sources_from_result, _infer_service_from_tool
+        from deep_wide_research.context_utils import extract_sources_from_result, _infer_service_from_tool, parallel_result_errors
     except ImportError:
         # Import as standalone module (Railway deployment environment)
         from providers import chat_complete
         from mcp_client import get_registry
         from newprompt import create_unified_research_prompt
-        from context_utils import extract_sources_from_result, _infer_service_from_tool
+        from context_utils import extract_sources_from_result, _infer_service_from_tool, parallel_result_errors
 
 
 def build_mcp_tools_description(tools: List[Dict[str, Any]]) -> str:
@@ -435,6 +435,10 @@ async def run_research_llm_driven(
             tool_args = info.get("arguments", {}) if isinstance(info.get("arguments", {}), dict) else {}
             query_val = tool_args.get("query") or tool_args.get("objective")
             service = tr.get("service") or _infer_service_from_tool(tool_name) or "other"
+            if service == "parallel":
+                fetch_errors = parallel_result_errors(parsed_result)
+                if fetch_errors:
+                    errors.append({"tool": tool_name, "errors": fetch_errors})
             # Normalize sources for supported search providers
             if service in ("tavily", "exa", "parallel"):
                 try:

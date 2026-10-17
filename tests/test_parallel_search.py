@@ -93,6 +93,10 @@ class ParallelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             data = {'error': {'code': -32602, 'message': 'Invalid arguments'}}
         elif payload['method'] == 'tools/list':
             data = {'result': {'tools': TOOLS}}
+        elif self.response_mode == 'fetch_errors_structured':
+            data = {'result': {'structuredContent': self.fetch_error_payload}}
+        elif self.response_mode == 'fetch_errors_text':
+            data = {'result': {'content': [{'type': 'text', 'text': json.dumps(self.fetch_error_payload)}]}}
         elif self.response_mode == 'tool_error':
             data = {'result': {'isError': True, 'content': [{'type': 'text', 'text': 'quota exceeded'}]}}
         else:
@@ -252,6 +256,36 @@ class ParallelRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 result = await research_strategy.run_research_llm_driven('Facts', CFG)
                 self.assertEqual(result['contextjson']['sources'], [])
         self.assertTrue(all(url == self.url for url, _, _ in self.requests))
+
+    async def test_per_url_fetch_errors_reach_model_with_partial_results(self):
+        error = {'url': 'https://example.org/missing', 'error_type': 'http_error',
+                 'http_status_code': 404, 'content': 'Page not found'}
+        for encoding in ['structured', 'text']:
+            for partial in [False, True]:
+                payload = {'results': FETCH_RESULT['results'] if partial else [], 'errors': [error]}
+                raw = ({'structuredContent': payload} if encoding == 'structured'
+                       else {'content': [{'type': 'text', 'text': json.dumps(payload)}]})
+                self.response_mode = 'fetch_errors_' + encoding
+                self.fetch_error_payload = payload
+                prompts = []
+
+                async def scripted_model(**kwargs):
+                    prompts.append(kwargs['messages'][-1]['content'])
+                    if len(prompts) == 1:
+                        return SimpleNamespace(content=tool_call('web_fetch', {'urls': [error['url']]}))
+                    self.assertIn('<TOOL_ERRORS>', prompts[-1])
+                    self.assertIn(error['url'], prompts[-1])
+                    self.assertIn('404', prompts[-1])
+                    self.assertIn('Page not found', prompts[-1])
+                    if partial:
+                        self.assertIn('Complete page.', prompts[-1])
+                    return SimpleNamespace(content='Fetch failure understood.')
+
+                with self.subTest(encoding=encoding, partial=partial), \
+                     patch.object(research_strategy, 'chat_complete', side_effect=scripted_model):
+                    result = await research_strategy.run_research_llm_driven('Fetch sources', CFG)
+                    self.assertEqual(len(result['contextjson']['sources']), int(partial))
+                    self.assertEqual(json.loads(result['raw_notes'])['tool_calls'][0]['result'], raw)
 
     async def test_timeout_is_bounded_and_cancellation_closes_sessions(self):
         self.response_mode = 'delay'
